@@ -1,0 +1,21 @@
+feature,mean_abs_shap
+duration_of_dcp,1.4543630495188353
+payment_burden_ratio,0.5139511893767825
+has_payday_debt_on_DCP_at_activation,0.35324713767284843
+monthly_expenses_at_activation,0.31069938119850543
+expense_to_income,0.2011603252730579
+monthly_income_at_activation,0.195920547910656
+disposable_income,0.16292598629650595
+number_in_household_at_activation,0.15709092166874072
+dependents_at_activation,0.12978228922946136
+DCP_debt_balance_at_activation,0.11717947120481989
+household_density,0.10618425003745596
+dependents_flag,0.09926416420399269
+employment_status_at_activation_Working Full-Time,0.0812138930537279
+housing_status_at_activation_Rent,0.07924514605615977
+payday_ratio,0.07306382870548338
+gender_at_activation_Female,0.07003702032320547
+housing_status_at_activation_Own,0.06325510480282164
+reason_missing_flag,0.0598322345710681
+age_group_45-54,0.05980587728248223
+marital_status_at_activation_Single,0.056737941673841115

@@ -1,0 +1,8 @@
+scenario,baseline_completions,projected_completions,extra_families,relative_uplift_pct
+Do nothing,863.06,863.06,0.0,0.0
+"Intake-only flag
+(check-ins)",863.06,949.366,86.306,10.0
+"Intake + month-3
+re-engagement",863.06,1009.7801999999999,146.7202,17.0
+"Both interventions
+(ceiling)",863.06,1052.9332,189.8732,22.0

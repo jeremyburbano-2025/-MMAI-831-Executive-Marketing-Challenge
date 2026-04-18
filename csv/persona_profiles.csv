@@ -1,0 +1,6 @@
+persona,n,median_age,median_income,median_dti,pct_payday,pct_ontario,completion_rate
+P2: Younger • lower-income • Ontario,962,33.0,2200.0,4.63,0.0,100.0,0.4688149688149688
+P1: Mid-career,247,48.0,4931.0,11.1,24.7,83.8,0.41295546558704455
+P5: Younger • lower-income,523,36.0,2800.0,4.12,23.7,0.0,0.3824091778202677
+P4: Mid-career • with dependents • Ontario,772,38.0,3243.0,3.44,44.7,100.0,0.38212435233160624
+P3: Younger • lower-income • payday-reliant,708,37.0,2400.0,4.07,100.0,100.0,0.2994350282485876

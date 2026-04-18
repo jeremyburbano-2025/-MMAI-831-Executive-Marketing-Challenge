@@ -52,6 +52,7 @@ from scipy import stats
 import xgboost as xgb
 import lightgbm as lgb
 import shap
+from lifelines import CoxPHFitter, KaplanMeierFitter
 
 warnings.filterwarnings("ignore")
 RNG = 42
@@ -539,6 +540,150 @@ def build_personas(d: pd.DataFrame):
 
 
 # --------------------------------------------------------------------------- #
+#  6B. SURVIVAL ANALYSIS
+# --------------------------------------------------------------------------- #
+def fit_survival_analysis(d: pd.DataFrame, out_dir: Path):
+    """
+    LR answers IF a client will complete (intake risk score).
+    Cox answers WHEN a client is most likely to drop out (intervention timing).
+    These are complementary — LR tiers the client at Day 0, Cox sets the
+    counsellor alert window.
+    """
+    cox_base_cols = [
+        "duration_of_dcp",
+        "target",
+        "debt_to_income",
+        "has_payday_debt_on_DCP_at_activation",
+        "early_payment_score",
+        "payment_burden_ratio",
+        "housing_status_at_activation",
+        "age_at_activation",
+        "disposable_income",
+    ]
+    cox_df = d[cox_base_cols].copy()
+
+    # Robust missing-value handling before one-hot encoding and model fit.
+    cox_df["housing_status_at_activation"] = cox_df["housing_status_at_activation"].fillna("Missing")
+    for col in [
+        "duration_of_dcp",
+        "target",
+        "debt_to_income",
+        "has_payday_debt_on_DCP_at_activation",
+        "early_payment_score",
+        "payment_burden_ratio",
+        "age_at_activation",
+        "disposable_income",
+    ]:
+        cox_df[col] = pd.to_numeric(cox_df[col], errors="coerce")
+
+    cox_df["target"] = cox_df["target"].fillna(0)
+    cox_df["duration_of_dcp"] = cox_df["duration_of_dcp"].fillna(cox_df["duration_of_dcp"].median())
+    cox_df["has_payday_debt_on_DCP_at_activation"] = cox_df[
+        "has_payday_debt_on_DCP_at_activation"
+    ].fillna(cox_df["has_payday_debt_on_DCP_at_activation"].mode().iloc[0])
+    for col in [
+        "debt_to_income",
+        "early_payment_score",
+        "payment_burden_ratio",
+        "age_at_activation",
+        "disposable_income",
+    ]:
+        cox_df[col] = cox_df[col].fillna(cox_df[col].median())
+
+    cox_df_enc = pd.get_dummies(
+        cox_df,
+        columns=["housing_status_at_activation"],
+        prefix="housing_status_at_activation",
+        drop_first=True,
+    )
+
+    cph = CoxPHFitter()
+    cph.fit(cox_df_enc, duration_col="duration_of_dcp", event_col="target")
+    cph.print_summary()
+    cph.summary.to_csv(out_dir / "cox_summary.csv")
+
+    cox_features = cox_df_enc.drop(columns=["duration_of_dcp", "target"])
+    median_survival = cph.predict_median(cox_features)
+    median_survival = pd.to_numeric(median_survival, errors="coerce")
+
+    return cph, cox_df_enc, median_survival
+
+
+def chart_survival_by_risk_tier(d: pd.DataFrame, lr_proba: np.ndarray, out: Path):
+    tiers = pd.qcut(lr_proba, q=3, labels=["High", "Medium", "Low"])
+    plot_df = d[["duration_of_dcp", "target"]].copy()
+    plot_df["risk_tier"] = tiers
+    plot_df["dropout_event"] = 1 - plot_df["target"]
+
+    fig, ax = plt.subplots(figsize=(8.8, 5.0))
+    kmf = KaplanMeierFitter()
+    color_map = {"Low": PAL["sage"], "Medium": PAL["amber"], "High": PAL["coral"]}
+
+    for tier in ["Low", "Medium", "High"]:
+        g = plot_df[plot_df["risk_tier"] == tier]
+        if g.empty:
+            continue
+        kmf.fit(
+            durations=g["duration_of_dcp"],
+            event_observed=g["dropout_event"],
+            label=f"{tier} risk",
+        )
+        surv = kmf.survival_function_at_times(np.arange(0, 61)).reset_index()
+        surv.columns = ["month", "survival"]
+        ax.plot(
+            surv["month"],
+            surv["survival"],
+            lw=2.2,
+            color=color_map[tier],
+            label=f"{tier} risk",
+        )
+
+    ax.set_xlim(0, 60)
+    ax.set_ylim(0, 1.02)
+    style_ax(
+        ax,
+        "When do clients drop out by risk tier",
+        xlab="Months in DCP",
+        ylab="Probability still active (not dropped)",
+    )
+    ax.legend(frameon=False, loc="best")
+    return save_fig(fig, out, "11_survival_by_risk_tier")
+
+
+def chart_cox_hazard_forest(cph: CoxPHFitter, out: Path):
+    s = cph.summary.reset_index().rename(columns={"index": "covariate"})
+    s = s[["covariate", "exp(coef)", "exp(coef) lower 95%", "exp(coef) upper 95%"]].copy()
+    s = s.sort_values("exp(coef)", ascending=True)
+
+    fig, ax = plt.subplots(figsize=(9.2, 5.4))
+    y = np.arange(len(s))
+    center = s["exp(coef)"].values
+    lo = center - s["exp(coef) lower 95%"].values
+    hi = s["exp(coef) upper 95%"].values - center
+
+    ax.errorbar(
+        center,
+        y,
+        xerr=[lo, hi],
+        fmt="o",
+        color=PAL["ink"],
+        ecolor=PAL["slate"],
+        elinewidth=1.4,
+        capsize=3,
+    )
+    ax.axvline(1.0, color=PAL["ink"], linestyle=":", lw=1.2)
+    ax.set_yticks(y)
+    ax.set_yticklabels(s["covariate"])
+    style_ax(
+        ax,
+        "Cox model — what accelerates dropout",
+        xlab="Hazard ratio (95% CI)",
+        ylab="",
+    )
+    return save_fig(fig, out, "12_cox_hazard_forest")
+
+
+# --------------------------------------------------------------------------- #
 #  7. INTERVENTION SIMULATION
 # --------------------------------------------------------------------------- #
 def simulate_interventions(full_metrics, annual_enrolments=2200, base_rate=0.3923):
@@ -714,6 +859,19 @@ def main(input_path: Path, out_dir: Path, chart_dir: Path):
 
     chart_personas(personas, chart_dir)
 
+    print("Running SURVIVAL ANALYSIS ...")
+    cph, cox_df_enc, cox_median_survival = fit_survival_analysis(d, out_dir)
+
+    lr_intake = R_intake["trained"].get("Logistic Regression")
+    if lr_intake is not None:
+        X_i_transformed = R_intake["pre"].transform(X_i)
+        lr_proba_full = lr_intake.predict_proba(X_i_transformed)[:, 1]
+        chart_survival_by_risk_tier(d, lr_proba_full, chart_dir)
+    else:
+        print("  Logistic Regression model not available; skipping risk-tier survival chart.")
+
+    chart_cox_hazard_forest(cph, chart_dir)
+
     print("Simulating interventions ...")
     # Aggregate best row per feature set for simulation
     best_per_set = metrics.sort_values("test_auc", ascending=False).groupby("feature_set").head(1)
@@ -727,6 +885,7 @@ def main(input_path: Path, out_dir: Path, chart_dir: Path):
 
     print("Writing processed Excel ...")
     processed = d_clustered.copy()
+    processed["cox_median_survival"] = cox_median_survival.reindex(processed.index)
     # Nicer column order: originals first, then engineered features
     engineered = [c for c in processed.columns if c not in df.columns]
     processed = processed[list(df.columns) + engineered]
@@ -771,6 +930,7 @@ ENG_DESCRIPTIONS = {
     "early_full_count": "Count of full payments in months 1-6",
     "early_zero_count": "Count of zero payments in months 1-6",
     "early_missed_any": "1 = at least one zero payment in months 1-6",
+    "cox_median_survival": "Predicted median survival time from Cox model (months)",
     "cluster": "KMeans persona cluster (0-4)",
     **{f"pmt_score_{m:02d}": f"Month-{m} payment score (full=1, partial=0.5, zero=0)"
        for m in range(1, 13)},
